@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="zh-HK">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <title>無錯誤感官學習遊戲 | Errorless Sensory Game</title>
+    <!-- Tailwind CSS for styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX compilation in browser -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; touch-action: none; user-select: none; }
+        .fill-overlay { transition: height 0.1s linear; }
+        * { -webkit-touch-callout: none; }
+        
+        /* 柔和呼吸閃爍效果，吸引學生視線 */
+        @keyframes gentle-pulse {
+            0%, 100% { opacity: 1; }
+            50% { opacity: 0.85; }
+        }
+        .animate-gentle-pulse {
+            animation: gentle-pulse 2.5s ease-in-out infinite;
+        }
+
+        /* 選項寬度過渡動畫 */
+        .option-panel {
+            transition: all 0.5s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+    </style>
+</head>
+<body class="bg-gray-900 font-sans h-screen w-screen flex flex-col">
+
+<div id="root" class="h-full w-full flex flex-col"></div>
+
+<script type="text/babel">
+    const { useState, useEffect, useRef } = React;
+
+    // --- 設定資料 ---
+    const GAME_MODES = {
+        light: {
+            titleZh: "透光測試",
+            titleEn: "Light Transmission",
+            opt1: { zh: "透光", en: "Transparent", color: "bg-emerald-500", highlight: "bg-emerald-400", dark: "bg-gray-800", icon: "sun" },
+            opt2: { zh: "不透光", en: "Opaque", color: "bg-rose-500", highlight: "bg-rose-400", dark: "bg-gray-800", icon: "block" }
+        },
+        solubility: {
+            titleZh: "溶解測試",
+            titleEn: "Solubility",
+            opt1: { zh: "會溶解", en: "Soluble", color: "bg-emerald-500", highlight: "bg-emerald-400", dark: "bg-gray-800", icon: "water" },
+            opt2: { zh: "不會溶解", en: "Insoluble", color: "bg-rose-500", highlight: "bg-rose-400", dark: "bg-gray-800", icon: "rock" }
+        }
+    };
+
+    // --- SVG 圖示組件 ---
+    const Icons = {
+        sun: ({className}) => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                <circle cx="12" cy="12" r="5"></circle>
+                <line x1="12" y1="1" x2="12" y2="4"></line>
+                <line x1="12" y1="20" x2="12" y2="23"></line>
+                <line x1="4.22" y1="4.22" x2="5.64" y2="5.64"></line>
+                <line x1="18.36" y1="18.36" x2="19.78" y2="19.78"></line>
+                <line x1="1" y1="12" x2="4" y2="12"></line>
+                <line x1="20" y1="12" x2="23" y2="12"></line>
+                <line x1="4.22" y1="19.78" x2="5.64" y2="18.36"></line>
+                <line x1="18.36" y1="5.64" x2="19.78" y2="4.22"></line>
+            </svg>
+        ),
+        block: ({className}) => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                <circle cx="12" cy="12" r="10"></circle>
+                <line x1="4.93" y1="4.93" x2="19.07" y2="19.07"></line>
+            </svg>
+        ),
+        water: ({className}) => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                <path d="M12 22a8 8 0 0 0 8-8c0-5.4-8-12-8-12s-8 6.6-8 12a8 8 0 0 0 8 8z"></path>
+                <path d="M12 18a4 4 0 0 0 4-4"></path>
+            </svg>
+        ),
+        rock: ({className}) => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>
+                <polygon points="12 2 2 12 12 22 22 12 12 2"></polygon>
+            </svg>
+        ),
+        check: () => (
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round" className="w-48 h-48 text-green-500 bg-white rounded-full p-4 shadow-2xl">
+                <polyline points="20 6 9 17 4 12"></polyline>
+            </svg>
+        )
+    };
+
+    // --- 語音合成輔助函數 (雙語版) ---
+    const speakBilingualFeedback = (zhText, enText) => {
+        window.speechSynthesis.cancel();
+        const voices = window.speechSynthesis.getVoices();
+
+        const zhUtterance = new SpeechSynthesisUtterance(zhText);
+        zhUtterance.lang = 'zh-HK';
+        zhUtterance.rate = 0.9; 
+        zhUtterance.pitch = 1.1;
+        const hkVoice = voices.find(v => v.lang.includes('zh-HK') || v.lang.includes('yue'));
+        if (hkVoice) zhUtterance.voice = hkVoice;
+        
+        const enUtterance = new SpeechSynthesisUtterance(enText);
+        enUtterance.lang = 'en-US';
+        enUtterance.rate = 0.9;
+        
+        const maleKeywords = ['male', 'david', 'daniel', 'arthur', 'mark', 'alex', 'fred', 'george', 'aaron'];
+        let enVoice = voices.find(v => 
+            (v.lang.includes('en-US') || v.lang.includes('en-GB')) && 
+            maleKeywords.some(keyword => v.name.toLowerCase().includes(keyword))
+        );
+        if (!enVoice) {
+            enVoice = voices.find(v => v.lang.includes('en-US') || v.lang.includes('en-GB'));
+        }
+        if (enVoice) enUtterance.voice = enVoice;
+
+        window.speechSynthesis.speak(zhUtterance);
+        window.speechSynthesis.speak(enUtterance);
+    };
+
+    // --- 主應用程式 ---
+    function App() {
+        const [mode, setMode] = useState('light');
+        const [correctOption, setCorrectOption] = useState(1); 
+        const [dwellTime, setDwellTime] = useState(1.5); 
+        
+        const [hoveredOption, setHoveredOption] = useState(null);
+        const [progress, setProgress] = useState(0);
+        const [showResult, setShowResult] = useState(false);
+        
+        const timerRef = useRef(null);
+        const currentData = GAME_MODES[mode];
+
+        useEffect(() => {
+            if (window.speechSynthesis) window.speechSynthesis.getVoices();
+        }, []);
+
+        // 處理注視邏輯 (只在正確選項啟動)
+        useEffect(() => {
+            if (showResult) return;
+
+            // 無錯誤機制：只有停留在正確答案上才啟動進度條
+            if (hoveredOption === correctOption) {
+                const intervalTime = 50; 
+                const step = (intervalTime / (dwellTime * 1000)) * 100; 
+
+                timerRef.current = setInterval(() => {
+                    setProgress(prev => {
+                        if (prev + step >= 100) {
+                            clearInterval(timerRef.current);
+                            handleSuccess();
+                            return 100;
+                        }
+                        return prev + step;
+                    });
+                }, intervalTime);
+            } else {
+                setProgress(0);
+                if (timerRef.current) clearInterval(timerRef.current);
+            }
+
+            return () => {
+                if (timerRef.current) clearInterval(timerRef.current);
+            };
+        }, [hoveredOption, dwellTime, showResult, correctOption]);
+
+        // 處理成功回饋
+        const handleSuccess = () => {
+            setHoveredOption(null);
+            setProgress(0);
+            setShowResult(true);
+            
+            const item = correctOption === 1 ? currentData.opt1 : currentData.opt2;
+            speakBilingualFeedback(
+                `你答啱咗啦，呢件物件係${item.zh}嘅`,
+                `Correct! This object is ${item.en}.`
+            );
+
+            // 顯示結果 4.5 秒後自動恢復
+            setTimeout(() => {
+                setShowResult(false);
+            }, 4500);
+        };
+
+        const handlePointerEnter = (opt) => {
+            if (!showResult) setHoveredOption(opt);
+        };
+
+        const handlePointerLeave = () => {
+            setHoveredOption(null);
+        };
+
+        const IconLeft = Icons[currentData.opt1.icon];
+        const IconRight = Icons[currentData.opt2.icon];
+
+        // 判斷左側和右側的狀態
+        const isLeftCorrect = correctOption === 1;
+        const leftWidth = isLeftCorrect ? 'w-[80%]' : 'w-[20%]';
+        const rightWidth = !isLeftCorrect ? 'w-[80%]' : 'w-[20%]';
+        
+        // 樣式動態計算
+        const getStyles = (isCorrect, data) => {
+            if (isCorrect) {
+                return {
+                    bgClass: `${data.color} animate-gentle-pulse z-10 shadow-2xl`,
+                    iconClass: "w-32 h-32 md:w-48 md:h-48 mb-4 opacity-100 text-white drop-shadow-md",
+                    titleClass: "text-7xl md:text-9xl font-black text-white mb-4 tracking-wider drop-shadow-lg",
+                    subClass: "text-3xl md:text-5xl font-bold text-white opacity-90",
+                    showContent: true
+                };
+            } else {
+                return {
+                    bgClass: `${data.dark} opacity-50 z-0 grayscale`,
+                    iconClass: "hidden", // 隱藏圖示
+                    titleClass: "text-2xl md:text-3xl font-bold text-gray-500 transform -rotate-90 md:rotate-0", // 縮小文字，可能垂直顯示
+                    subClass: "hidden",
+                    showContent: false
+                };
+            }
+        };
+
+        const leftStyles = getStyles(isLeftCorrect, currentData.opt1);
+        const rightStyles = getStyles(!isLeftCorrect, currentData.opt2);
+
+        return (
+            <div className="h-full flex flex-col w-full relative select-none">
+                
+                {/* --- 教師工具列 --- */}
+                <div className="bg-slate-800 text-white p-4 flex flex-wrap items-center justify-between shadow-md z-20">
+                    <div className="flex items-center space-x-4 w-full md:w-auto mb-4 md:mb-0">
+                        <span className="font-bold text-lg md:text-xl mr-2 text-yellow-300 flex flex-col">
+                            <span>⚙️ 協助者設定 (無錯誤版)</span>
+                            <span className="text-xs text-yellow-100/70">Errorless Settings</span>
+                        </span>
+                        
+                        {/* 模式切換 */}
+                        <div className="flex items-center space-x-2 bg-slate-700 p-2 rounded-lg">
+                            <span className="text-sm text-gray-300 flex flex-col leading-tight">
+                                <span>活動</span>
+                                <span className="text-xs">Activity</span>
+                            </span>
+                            <select 
+                                value={mode} 
+                                onChange={(e) => setMode(e.target.value)}
+                                className="bg-slate-600 text-white p-2 rounded text-base focus:outline-none"
+                            >
+                                <option value="light">透光/不透光 (Light / Opaque)</option>
+                                <option value="solubility">溶解/不溶解 (Soluble / Insoluble)</option>
+                            </select>
+                        </div>
+
+                        {/* 正確答案設定 (決定畫面哪邊變大) */}
+                        <div className="flex items-center space-x-2 bg-slate-700 p-2 rounded-lg">
+                            <span className="text-sm text-gray-300 flex flex-col leading-tight">
+                                <span>目標答案</span>
+                                <span className="text-xs">Target Answer</span>
+                            </span>
+                            <button 
+                                onClick={() => setCorrectOption(1)}
+                                className={`px-3 py-1 md:px-4 md:py-2 rounded font-bold transition-colors flex flex-col items-center ${correctOption === 1 ? 'bg-emerald-500 text-white ring-2 ring-white' : 'bg-slate-600 text-gray-400'}`}
+                            >
+                                <span>{currentData.opt1.zh}</span>
+                            </button>
+                            <button 
+                                onClick={() => setCorrectOption(2)}
+                                className={`px-3 py-1 md:px-4 md:py-2 rounded font-bold transition-colors flex flex-col items-center ${correctOption === 2 ? 'bg-rose-500 text-white ring-2 ring-white' : 'bg-slate-600 text-gray-400'}`}
+                            >
+                                <span>{currentData.opt2.zh}</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    {/* 注視時間設定 */}
+                    <div className="flex items-center space-x-4 bg-slate-700 p-2 rounded-lg w-full md:w-auto">
+                        <label className="text-sm text-gray-300 flex items-center whitespace-nowrap">
+                            <div className="flex flex-col mr-2 leading-tight">
+                                <span>注視時間 (秒)</span>
+                                <span className="text-xs">Dwell Time (s)</span>
+                            </div>
+                            <span className="font-bold text-white text-xl w-8">{dwellTime.toFixed(1)}</span>
+                        </label>
+                        <input 
+                            type="range" 
+                            min="0.5" 
+                            max="3.0" 
+                            step="0.1" 
+                            value={dwellTime} 
+                            onChange={(e) => setDwellTime(parseFloat(e.target.value))}
+                            className="w-32 md:w-48 h-3 bg-gray-500 rounded-lg appearance-none cursor-pointer"
+                        />
+                    </div>
+                </div>
+
+                {/* --- 主遊戲區域 --- */}
+                <div className="flex-1 flex flex-row overflow-hidden relative bg-gray-900">
+                    
+                    {/* 選項 1 (左側) */}
+                    <div 
+                        onPointerEnter={() => handlePointerEnter(1)}
+                        onPointerLeave={handlePointerLeave}
+                        onPointerCancel={handlePointerLeave}
+                        onClick={() => isLeftCorrect && handleSuccess()} // 只有正確時點擊有效
+                        className={`option-panel ${leftWidth} ${leftStyles.bgClass} h-full relative cursor-pointer flex flex-col items-center justify-center`}
+                    >
+                        {/* 只有正確選項才會顯示進度條 */}
+                        {hoveredOption === 1 && isLeftCorrect && (
+                            <div 
+                                className="absolute bottom-0 left-0 w-full bg-white opacity-40 fill-overlay rounded-t-xl"
+                                style={{ height: `${progress}%` }}
+                            ></div>
+                        )}
+                        
+                        <div className="relative z-10 flex flex-col items-center text-center pointer-events-none p-4">
+                            <IconLeft className={leftStyles.iconClass} />
+                            <h1 className={leftStyles.titleClass}>
+                                {currentData.opt1.zh}
+                            </h1>
+                            <h2 className={leftStyles.subClass}>
+                                {currentData.opt1.en}
+                            </h2>
+                        </div>
+                    </div>
+
+                    {/* 分隔線 (純視覺) */}
+                    <div className="w-1 md:w-2 bg-gray-900 z-10 h-full"></div>
+
+                    {/* 選項 2 (右側) */}
+                    <div 
+                        onPointerEnter={() => handlePointerEnter(2)}
+                        onPointerLeave={handlePointerLeave}
+                        onPointerCancel={handlePointerLeave}
+                        onClick={() => !isLeftCorrect && handleSuccess()} // 只有正確時點擊有效
+                        className={`option-panel ${rightWidth} ${rightStyles.bgClass} h-full relative cursor-pointer flex flex-col items-center justify-center`}
+                    >
+                        {/* 只有正確選項才會顯示進度條 */}
+                        {hoveredOption === 2 && !isLeftCorrect && (
+                            <div 
+                                className="absolute bottom-0 left-0 w-full bg-white opacity-40 fill-overlay rounded-t-xl"
+                                style={{ height: `${progress}%` }}
+                            ></div>
+                        )}
+                        
+                        <div className="relative z-10 flex flex-col items-center text-center pointer-events-none p-4">
+                            <IconRight className={rightStyles.iconClass} />
+                            <h1 className={rightStyles.titleClass}>
+                                {currentData.opt2.zh}
+                            </h1>
+                            <h2 className={rightStyles.subClass}>
+                                {currentData.opt2.en}
+                            </h2>
+                        </div>
+                    </div>
+
+                    {/* --- 回饋動畫 Overlay --- */}
+                    {showResult && (
+                        <div className="absolute inset-0 bg-black/40 z-50 flex items-center justify-center backdrop-blur-sm">
+                            <div className="transform scale-150 animate-bounce">
+                                <Icons.check />
+                            </div>
+                        </div>
+                    )}
+                </div>
+            </div>
+        );
+    }
+
+    const root = ReactDOM.createRoot(document.getElementById('root'));
+    root.render(<App />);
+</script>
+
+</body>
+</html>
